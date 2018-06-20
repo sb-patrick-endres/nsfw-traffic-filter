@@ -1,11 +1,9 @@
 """
-I still need to convert the regex to a trie method to speed up the matching. 
 I also need to set up the logic to make the second call with nextPageToken if total rows > 50000.
 For now, it is slow and slightly manual on the combination of paginated returns from the GA Reporting API.
-I need to figure out what format to output (days, weeks, months, etc.).
 """
 import re
-import pprint
+from pprint import pprint
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
@@ -139,27 +137,84 @@ print(ga_pandas.head())
 print("This is GA Pandas .info()")
 ga_pandas.info()
 
+# creates the Trie class to transform the regex
+class Trie():
+
+    def __init__(self):
+        self.data = {}
+
+    def add(self, word):
+        ref = self.data
+        for char in word:
+            ref[char] = char in ref and ref[char] or {}
+            ref = ref[char]
+        ref[''] = 1
+
+    def dump(self):
+        return self.data
+
+    def quote(self, char):
+        return re.escape(char)
+
+    def _pattern(self, pData):
+        data = pData
+        if "" in data and len(data.keys()) == 1:
+            return None
+
+        alt = []
+        cc = []
+        q = 0
+        for char in sorted(data.keys()):
+            if isinstance(data[char], dict):
+                try:
+                    recurse = self._pattern(data[char])
+                    alt.append(self.quote(char) + recurse)
+                except:
+                    cc.append(self.quote(char))
+            else:
+                q = 1
+        cconly = not len(alt) > 0
+
+        if len(cc) > 0:
+            if len(cc) == 1:
+                alt.append(cc[0])
+            else:
+                alt.append('[' + ''.join(cc) + ']')
+
+        if len(alt) == 1:
+            result = alt[0]
+        else:
+            result = "(?:" + "|".join(alt) + ")"
+
+        if q:
+            if cconly:
+                result += "?"
+            else:
+                result = "(?:%s)?" % result
+        return result
+
+    def pattern(self):
+        return self._pattern(self.dump())
+
 # This file contains all the NSFW terms.
-file = open('badword_list.txt')
+banned_words = [] 
+with open('badword_list.txt') as wordbook:
+    for word in wordbook:
+        word.replace('\n', '')
+        word = word.strip()
+        word = word.replace(' ', '+')
+        banned_words.append(word)
+        pprint(word)
 
-badword_list = list(file)
+def trie_regex_from_words(words):
+    trie = Trie()
+    for word in words:
+        trie.add(word)
+    return trie.pattern()
 
-regex_string = ''
+regex_string = trie_regex_from_words(banned_words)
 
-# transforms badword_list.txt into a regex
-for word in badword_list:
-  word.replace('\n', '')
-  word = word.strip()
-  word = word.replace('+', '\\+').replace('\\', '\\\\').replace('^', '\\^').replace('$', '\\$').replace('[', '\\[').replace(']', '\\]').replace('.', '\\.').replace('|', '\\|')
-  word = word.replace('?', '\\?').replace('*', '\\*').replace('(', '\\(').replace(')', '\\)')
-  regex_item = f'.*?{word}.*?|'
-  regex_string = regex_string + regex_item
-
-# matches the URL structure of VB
-regex_string = regex_string.replace(' ','+')
-
-# required to pare the last | from the regex
-regex_string = regex_string[:-1]
+print(regex_string)
 
 non_english = '|[^A-Za-z\\/\\+\\-0-9\\_\\&\\=\\s\\?\\.\\@\'\"\\(\\)\\:\\|]'
 
